@@ -1,15 +1,32 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import CandidateCard from "@/components/CandidateCard";
-import { candidates, positions } from "@/lib/mock-data";
 
 export default function Candidates() {
   const [search, setSearch] = useState("");
   const [activePosition, setActivePosition] = useState("all");
 
-  const filtered = candidates.filter((c) => {
-    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.partyList.toLowerCase().includes(search.toLowerCase());
-    const matchesPosition = activePosition === "all" || c.position === activePosition;
+  const { data: positions } = useQuery({
+    queryKey: ["positions"],
+    queryFn: async () => {
+      const { data } = await supabase.from("positions").select("*").order("display_order");
+      return data ?? [];
+    },
+  });
+
+  const { data: candidates } = useQuery({
+    queryKey: ["candidates"],
+    queryFn: async () => {
+      const { data } = await supabase.from("candidates").select("*");
+      return data ?? [];
+    },
+  });
+
+  const filtered = (candidates ?? []).filter((c) => {
+    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.party_list.toLowerCase().includes(search.toLowerCase());
+    const matchesPosition = activePosition === "all" || c.position_id === activePosition;
     return matchesSearch && matchesPosition;
   });
 
@@ -20,46 +37,31 @@ export default function Candidates() {
         <p className="text-muted-foreground mt-1">Meet the candidates running for SSLG positions</p>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-8">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search candidates..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm"
-          />
+          <input type="text" placeholder="Search candidates..." value={search} onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm" />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setActivePosition("all")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              activePosition === "all" ? "gradient-navy text-primary-foreground" : "bg-card border border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
+          <button onClick={() => setActivePosition("all")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activePosition === "all" ? "gradient-navy text-primary-foreground" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}>
             All
           </button>
-          {positions.slice(0, 5).map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setActivePosition(p.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                activePosition === p.id ? "gradient-navy text-primary-foreground" : "bg-card border border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
+          {(positions ?? []).map((p) => (
+            <button key={p.id} onClick={() => setActivePosition(p.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activePosition === p.id ? "gradient-navy text-primary-foreground" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}>
               {p.title}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-        {filtered.map((candidate, i) => (
-          <CandidateCard key={candidate.id} candidate={candidate} delay={i * 60} />
-        ))}
+        {filtered.map((candidate, i) => {
+          const pos = (positions ?? []).find((p) => p.id === candidate.position_id);
+          return <CandidateCard key={candidate.id} candidate={candidate} positionTitle={pos?.title} delay={i * 60} />;
+        })}
       </div>
 
       {filtered.length === 0 && (
