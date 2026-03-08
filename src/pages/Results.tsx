@@ -24,13 +24,8 @@ export default function Results() {
     refetchInterval: 10000,
   });
 
-  const { data: totalVotes } = useQuery({
-    queryKey: ["total-votes"],
-    queryFn: async () => {
-      const { count } = await supabase.from("votes").select("*", { count: "exact", head: true });
-      return count ?? 0;
-    },
-  });
+  // Derive total votes from vote_counts view (publicly accessible)
+  const totalVotes = (voteCounts ?? []).reduce((sum, vc) => sum + (vc.vote_count ?? 0), 0);
 
   const { data: votedCount } = useQuery({
     queryKey: ["voted-count"],
