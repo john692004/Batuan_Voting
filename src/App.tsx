@@ -15,6 +15,7 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+// BNHS SSLG Election App
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
