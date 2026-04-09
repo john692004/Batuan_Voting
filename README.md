@@ -1,73 +1,67 @@
-# Welcome to your Lovable project
+# Batuan National High School — SSLG Voting & Management System
 
-## Project info
+A web-based voting system for the Supreme Student Learner Government (SSLG) election at Batuan National High School.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Tech Stack
 
-## How can I edit this code?
+- **Frontend**: React + Vite
+- **Backend**: Express.js (Node.js)
+- **Database**: MySQL
 
-There are several ways of editing your application.
+## Getting Started
 
-**Use Lovable**
+### Prerequisites
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- Node.js & npm
+- MySQL Server
 
-Changes made via Lovable will be committed automatically to this repo.
+### 1. Set up the database
 
-**Use your preferred IDE**
+```sql
+mysql -u root -p < server/schema.sql
+```
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### 2. Configure environment variables
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+Create a `.env` file in the root directory:
 
-Follow these steps:
+```env
+VITE_API_URL=http://localhost:3001/api
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=batuan_voting
+```
+
+### 3. Install dependencies
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+# Frontend
+npm install
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Backend
+cd server
+npm install
+```
 
-# Step 3: Install the necessary dependencies.
-npm i
+### 4. Run the application
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```sh
+# Start backend (from /server)
+npm run dev
+
+# Start frontend (from root)
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Default Admin Credentials
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+| Field    | Value                |
+|----------|----------------------|
+| Email    | `admin@bnhs.edu.ph`  |
+| Password | `admin123`           |
 
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+> **Note:** These credentials are seeded automatically when you run `schema.sql`. Change the password after your first login.
