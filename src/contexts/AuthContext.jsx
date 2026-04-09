@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const fetchMe = async () => {
     try {
@@ -20,12 +21,14 @@ export function AuthProvider({ children }) {
       setUser(data.user);
       setProfile(data.profile);
       setIsAdmin(data.isAdmin);
+      setMustChangePassword(!!data.must_change_password);
     } catch (err) {
       // Token invalid or expired
       localStorage.removeItem('auth_token');
       setUser(null);
       setProfile(null);
       setIsAdmin(false);
+      setMustChangePassword(false);
     } finally {
       setLoading(false);
     }
@@ -41,23 +44,26 @@ export function AuthProvider({ children }) {
     fetchMe();
   }, []);
 
-  const signUp = async (email, password, fullName) => {
+  const signIn = async (lrn, password) => {
     try {
-      const data = await api.post('/auth/register', { email, password, full_name: fullName });
+      const data = await api.post('/auth/login', { lrn, password });
       localStorage.setItem('auth_token', data.token);
       setUser(data.user);
+      setMustChangePassword(!!data.must_change_password);
       await fetchMe();
-      return { error: null };
+      return { error: null, must_change_password: !!data.must_change_password };
     } catch (err) {
       return { error: { message: err.message } };
     }
   };
 
-  const signIn = async (email, password) => {
+  const changePassword = async (newPassword) => {
     try {
-      const data = await api.post('/auth/login', { email, password });
-      localStorage.setItem('auth_token', data.token);
-      setUser(data.user);
+      const data = await api.post('/auth/change-password', { new_password: newPassword });
+      if (data.token) {
+        localStorage.setItem('auth_token', data.token);
+      }
+      setMustChangePassword(false);
       await fetchMe();
       return { error: null };
     } catch (err) {
@@ -70,10 +76,11 @@ export function AuthProvider({ children }) {
     setUser(null);
     setProfile(null);
     setIsAdmin(false);
+    setMustChangePassword(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session: null, loading, isAdmin, profile, signUp, signIn, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ user, session: null, loading, isAdmin, profile, mustChangePassword, signIn, signOut, changePassword, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

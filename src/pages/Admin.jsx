@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Settings, Users, Vote, BarChart3, Plus, Trash2, Power, UserPlus, Shield, ImagePlus, X, Pencil } from "lucide-react";
+import { Settings, Users, Vote, BarChart3, Plus, Trash2, Power, UserPlus, Shield, ImagePlus, X, Pencil, KeyRound, Search, GraduationCap } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,7 +27,13 @@ export default function Admin() {
   const editFileInputRef = useRef(null);
 
   // Delete confirmation state
-  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name }
+  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name, type }
+
+  // Voter management state
+  const [newVoter, setNewVoter] = useState({ lrn: "", full_name: "", grade_level: "", section: "" });
+  const [editVoter, setEditVoter] = useState(null);
+  const [resetTarget, setResetTarget] = useState(null);
+  const [voterSearch, setVoterSearch] = useState("");
 
   const openEditModal = (c) => {
     setEditCandidate({ id: c.id, name: c.name, position_id: c.position_id, grade_level: c.grade_level, section: c.section, party_list: c.party_list, motto: c.motto || '' });
@@ -45,6 +51,7 @@ export default function Admin() {
   const { data: candidates } = useQuery({ queryKey: ["candidates"], queryFn: () => api.get('/candidates') });
   const { data: settings } = useQuery({ queryKey: ["election-settings"], queryFn: () => api.get('/election-settings') });
   const { data: stats } = useQuery({ queryKey: ["admin-stats"], queryFn: () => api.get('/stats') });
+  const { data: voters } = useQuery({ queryKey: ["voters"], queryFn: () => api.get('/voters'), enabled: isAdmin });
 
   const profileCount = stats?.voterCount ?? 0;
   const votedCount = stats?.votedCount ?? 0;
@@ -112,6 +119,58 @@ export default function Admin() {
     onError: (err) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
   });
 
+  // Voter mutations
+  const addVoter = useMutation({
+    mutationFn: async () => {
+      if (!newVoter.lrn || !newVoter.full_name) throw new Error("LRN and full name are required");
+      await api.post('/voters', newVoter);
+    },
+    onSuccess: () => {
+      toast({ title: "Voter added!", description: "Default password is the LRN." });
+      setNewVoter({ lrn: "", full_name: "", grade_level: "", section: "" });
+      queryClient.invalidateQueries({ queryKey: ["voters"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
+    },
+    onError: (err) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
+  });
+
+  const updateVoter = useMutation({
+    mutationFn: async () => {
+      if (!editVoter || !editVoter.lrn || !editVoter.full_name) throw new Error("LRN and full name are required");
+      await api.put(`/voters/${editVoter.id}`, editVoter);
+    },
+    onSuccess: () => {
+      toast({ title: "Voter updated!" });
+      setEditVoter(null);
+      queryClient.invalidateQueries({ queryKey: ["voters"] });
+    },
+    onError: (err) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteVoter = useMutation({
+    mutationFn: async (id) => {
+      await api.delete(`/voters/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: "Voter removed" });
+      queryClient.invalidateQueries({ queryKey: ["voters"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
+    },
+    onError: (err) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async (id) => {
+      await api.post(`/voters/${id}/reset-password`);
+    },
+    onSuccess: () => {
+      toast({ title: "Password reset!", description: "Password has been reset to the voter's LRN." });
+      setResetTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["voters"] });
+    },
+    onError: (err) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
+  });
+
   if (!isAdmin) {
     return (
       <div className="container py-16 text-center animate-fade-in">
@@ -125,11 +184,18 @@ export default function Admin() {
 
   const tabs = [
     { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "voters", label: "Voters", icon: GraduationCap },
     { id: "candidates", label: "Candidates", icon: Users },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
   const turnout = profileCount && profileCount > 0 ? ((votedCount) / profileCount * 100).toFixed(1) : "0";
+
+  const filteredVoters = (voters ?? []).filter((v) => {
+    if (!voterSearch) return true;
+    const q = voterSearch.toLowerCase();
+    return v.lrn?.toLowerCase().includes(q) || v.full_name?.toLowerCase().includes(q) || v.section?.toLowerCase().includes(q);
+  });
 
   return (
     <div className="container py-8 md:py-12">
@@ -137,7 +203,7 @@ export default function Admin() {
         <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground flex items-center gap-3">
           <Settings className="w-8 h-8 text-gold" /> Admin Panel
         </h1>
-        <p className="text-muted-foreground mt-1">Manage election settings, candidates, and monitor results</p>
+        <p className="text-muted-foreground mt-1">Manage voters, candidates, election settings, and monitor results</p>
       </div>
 
       <div className="flex gap-1 p-1 bg-muted rounded-xl mb-8 overflow-x-auto">
@@ -156,6 +222,102 @@ export default function Admin() {
             <StatCard icon={Vote} label="Voted" value={votedCount?.toLocaleString() ?? "0"} variant="gold" delay={100} />
             <StatCard icon={BarChart3} label="Turnout" value={`${turnout}%`} delay={200} />
             <StatCard icon={Users} label="Candidates" value={(candidates ?? []).length} variant="navy" delay={300} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Voters Tab ── */}
+      {activeTab === "voters" && (
+        <div className="animate-fade-in space-y-6">
+          {/* Add voter form */}
+          <div className="bg-card rounded-xl border border-border p-6 shadow-elegant">
+            <h3 className="font-display font-bold text-foreground text-lg mb-4 flex items-center gap-2"><UserPlus className="w-5 h-5 text-gold" /> Add New Voter</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <input type="text" placeholder="LRN (12 digits)" value={newVoter.lrn} onChange={(e) => setNewVoter(p => ({ ...p, lrn: e.target.value }))} maxLength={20}
+                className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              <input type="text" placeholder="Full Name" value={newVoter.full_name} onChange={(e) => setNewVoter(p => ({ ...p, full_name: e.target.value }))} maxLength={100}
+                className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              <input type="text" placeholder="Grade Level" value={newVoter.grade_level} onChange={(e) => setNewVoter(p => ({ ...p, grade_level: e.target.value }))} maxLength={50}
+                className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              <input type="text" placeholder="Section" value={newVoter.section} onChange={(e) => setNewVoter(p => ({ ...p, section: e.target.value }))} maxLength={50}
+                className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+            </div>
+            <div className="flex items-center gap-4 mt-4">
+              <button onClick={() => addVoter.mutate()} disabled={addVoter.isPending}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl gradient-gold text-accent-foreground font-medium text-sm shadow-gold hover:opacity-90 transition-opacity disabled:opacity-50">
+                <UserPlus className="w-4 h-4" /> Add Voter
+              </button>
+              <p className="text-xs text-muted-foreground">Default password is the LRN. Student must change it on first login.</p>
+            </div>
+          </div>
+
+          {/* Search */}
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input type="text" placeholder="Search by LRN, name, or section..." value={voterSearch} onChange={(e) => setVoterSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm" />
+          </div>
+
+          {/* Voters table */}
+          <div className="bg-card rounded-xl border border-border overflow-hidden shadow-elegant">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    <th className="text-left p-4 font-semibold text-foreground">LRN</th>
+                    <th className="text-left p-4 font-semibold text-foreground">Full Name</th>
+                    <th className="text-left p-4 font-semibold text-foreground hidden sm:table-cell">Grade & Section</th>
+                    <th className="text-left p-4 font-semibold text-foreground hidden md:table-cell">Status</th>
+                    <th className="text-right p-4 font-semibold text-foreground">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredVoters.map((v) => (
+                    <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
+                      <td className="p-4 font-mono text-foreground text-xs">{v.lrn}</td>
+                      <td className="p-4 font-medium text-foreground">{v.full_name}</td>
+                      <td className="p-4 text-muted-foreground hidden sm:table-cell">{v.grade_level && v.section ? `${v.grade_level} — ${v.section}` : <span className="text-xs italic">Not set</span>}</td>
+                      <td className="p-4 hidden md:table-cell">
+                        <div className="flex items-center gap-2">
+                          {v.has_voted ? (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-success/15 text-success">Voted</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">Not voted</span>
+                          )}
+                          {v.must_change_password ? (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gold/15 text-gold">New</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => setEditVoter({ id: v.id, lrn: v.lrn, full_name: v.full_name, grade_level: v.grade_level || '', section: v.section || '' })}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setResetTarget({ id: v.id, name: v.full_name, lrn: v.lrn })}
+                            className="p-1.5 rounded-lg text-gold hover:bg-gold/10 transition-colors" title="Reset Password">
+                            <KeyRound className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: v.id, name: v.full_name, type: 'voter' })}
+                            className="p-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors" title="Delete">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredVoters.length === 0 && (
+                    <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">{voterSearch ? "No voters match your search." : "No voters yet. Add one above."}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {(voters ?? []).length > 0 && (
+              <div className="px-4 py-3 border-t border-border bg-muted/30 text-xs text-muted-foreground">
+                Showing {filteredVoters.length} of {(voters ?? []).length} voters
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -241,7 +403,7 @@ export default function Admin() {
                             <button onClick={() => openEditModal(c)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                               <Pencil className="w-4 h-4" />
                             </button>
-                            <button onClick={() => setDeleteTarget({ id: c.id, name: c.name })} className="p-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors">
+                            <button onClick={() => setDeleteTarget({ id: c.id, name: c.name, type: 'candidate' })} className="p-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -259,13 +421,13 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal (for both candidates and voters) */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setDeleteTarget(null)}>
           <div className="bg-card rounded-2xl border border-border p-6 shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display font-bold text-foreground text-lg flex items-center gap-2">
-                <Trash2 className="w-5 h-5 text-destructive" /> Delete Candidate
+                <Trash2 className="w-5 h-5 text-destructive" /> Delete {deleteTarget.type === 'voter' ? 'Voter' : 'Candidate'}
               </h3>
               <button onClick={() => setDeleteTarget(null)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                 <X className="w-5 h-5" />
@@ -275,19 +437,28 @@ export default function Admin() {
               Are you sure you want to delete
             </p>
             <p className="font-semibold text-foreground mb-5">{deleteTarget.name}?</p>
-            <p className="text-xs text-muted-foreground mb-6">This action cannot be undone. The candidate will be permanently removed.</p>
+            <p className="text-xs text-muted-foreground mb-6">
+              {deleteTarget.type === 'voter'
+                ? "This will permanently remove the voter account and all their votes."
+                : "This action cannot be undone. The candidate will be permanently removed."}
+            </p>
             <div className="flex items-center justify-end gap-3">
               <button onClick={() => setDeleteTarget(null)} className="px-5 py-2.5 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-colors">
                 Cancel
               </button>
               <button
-                onClick={() => { deleteCandidate.mutate(deleteTarget.id); setDeleteTarget(null); }}
-                disabled={deleteCandidate.isPending}
+                onClick={() => {
+                  if (deleteTarget.type === 'voter') {
+                    deleteVoter.mutate(deleteTarget.id);
+                  } else {
+                    deleteCandidate.mutate(deleteTarget.id);
+                  }
+                  setDeleteTarget(null);
+                }}
+                disabled={deleteCandidate.isPending || deleteVoter.isPending}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-destructive text-destructive-foreground font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {deleteCandidate.isPending
-                  ? <div className="w-4 h-4 border-2 border-destructive-foreground/30 border-t-destructive-foreground rounded-full animate-spin" />
-                  : <Trash2 className="w-4 h-4" />}
+                <Trash2 className="w-4 h-4" />
                 Delete
               </button>
             </div>
@@ -295,7 +466,78 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Edit Modal */}
+      {/* Reset Password Confirmation Modal */}
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setResetTarget(null)}>
+          <div className="bg-card rounded-2xl border border-border p-6 shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display font-bold text-foreground text-lg flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-gold" /> Reset Password
+              </h3>
+              <button onClick={() => setResetTarget(null)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-1">Reset password for</p>
+            <p className="font-semibold text-foreground mb-2">{resetTarget.name}</p>
+            <p className="text-sm text-muted-foreground mb-5">
+              The password will be reset to their LRN: <span className="font-mono font-medium text-foreground">{resetTarget.lrn}</span>
+            </p>
+            <p className="text-xs text-muted-foreground mb-6">The voter will be required to change their password on next login.</p>
+            <div className="flex items-center justify-end gap-3">
+              <button onClick={() => setResetTarget(null)} className="px-5 py-2.5 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={() => resetPassword.mutate(resetTarget.id)}
+                disabled={resetPassword.isPending}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl gradient-gold text-accent-foreground font-medium text-sm shadow-gold hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {resetPassword.isPending
+                  ? <div className="w-4 h-4 border-2 border-accent-foreground/30 border-t-accent-foreground rounded-full animate-spin" />
+                  : <KeyRound className="w-4 h-4" />}
+                Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Voter Modal */}
+      {editVoter && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setEditVoter(null)}>
+          <div className="bg-card rounded-2xl border border-border p-6 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-display font-bold text-foreground text-lg flex items-center gap-2"><Pencil className="w-5 h-5 text-gold" /> Edit Voter</h3>
+              <button onClick={() => setEditVoter(null)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input type="text" placeholder="LRN" value={editVoter.lrn} onChange={(e) => setEditVoter(p => ({ ...p, lrn: e.target.value }))} maxLength={20}
+                className="w-full px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              <input type="text" placeholder="Full Name" value={editVoter.full_name} onChange={(e) => setEditVoter(p => ({ ...p, full_name: e.target.value }))} maxLength={100}
+                className="w-full px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              <div className="grid grid-cols-2 gap-3">
+                <input type="text" placeholder="Grade Level" value={editVoter.grade_level} onChange={(e) => setEditVoter(p => ({ ...p, grade_level: e.target.value }))} maxLength={50}
+                  className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+                <input type="text" placeholder="Section" value={editVoter.section} onChange={(e) => setEditVoter(p => ({ ...p, section: e.target.value }))} maxLength={50}
+                  className="px-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-border">
+              <button onClick={() => setEditVoter(null)} className="px-5 py-2.5 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-colors">
+                Cancel
+              </button>
+              <button onClick={() => updateVoter.mutate()} disabled={updateVoter.isPending}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl gradient-gold text-accent-foreground font-medium text-sm shadow-gold hover:opacity-90 transition-opacity disabled:opacity-50">
+                {updateVoter.isPending ? <div className="w-4 h-4 border-2 border-accent-foreground/30 border-t-accent-foreground rounded-full animate-spin" /> : <Pencil className="w-4 h-4" />}
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Candidate Modal */}
       {editCandidate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={closeEditModal}>
           <div className="bg-card rounded-2xl border border-border p-6 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>

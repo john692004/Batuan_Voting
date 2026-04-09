@@ -11,6 +11,7 @@ import VotePage from "./pages/VotePage";
 import Results from "./pages/Results";
 import Admin from "./pages/Admin";
 import AuthPage from "./pages/AuthPage";
+import ChangePassword from "./pages/ChangePassword";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,6 +28,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<AuthPage />} />
+              <Route path="/change-password" element={<ChangePassword />} />
               <Route path="/candidates" element={<Candidates />} />
               <Route path="/vote" element={<VotePage />} />
               <Route path="/results" element={<Results />} />

@@ -36,69 +36,59 @@ app.use('/uploads', express.static('uploads'));
 
 // ─── Auth Routes ────────────────────────────────────────────────
 
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password, full_name } = req.body;
-    if (!email || !password || !full_name) {
-      return res.status(400).json({ error: 'Email, password, and full name are required' });
-    }
-
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length > 0) {
-      return res.status(400).json({ error: 'Email already registered' });
-    }
-
-    const id = uuidv4();
-    const password_hash = await bcrypt.hash(password, 10);
-
-    await pool.query(
-      'INSERT INTO users (id, email, password_hash, full_name) VALUES (?, ?, ?, ?)',
-      [id, email, password_hash, full_name]
-    );
-
-    // Create profile
-    await pool.query(
-      'INSERT INTO profiles (id, user_id, full_name) VALUES (?, ?, ?)',
-      [uuidv4(), id, full_name]
-    );
-
-    // Assign voter role
-    await pool.query(
-      'INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)',
-      [uuidv4(), id, 'voter']
-    );
-
-    const token = generateToken({ id, email });
-    res.json({ token, user: { id, email, full_name } });
-  } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
+// Login with LRN (students) or username (admin)
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+    const { lrn, password } = req.body;
+    if (!lrn || !password) {
+      return res.status(400).json({ error: 'LRN and password are required' });
     }
 
-    const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const [rows] = await pool.query('SELECT * FROM users WHERE lrn = ?', [lrn]);
     if (rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid LRN or password' });
     }
 
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Invalid LRN or password' });
     }
 
     const token = generateToken(user);
-    res.json({ token, user: { id: user.id, email: user.email, full_name: user.full_name } });
+    res.json({
+      token,
+      user: { id: user.id, lrn: user.lrn, full_name: user.full_name },
+      must_change_password: !!user.must_change_password,
+    });
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Change password (for forced password change on first login)
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  try {
+    const { new_password } = req.body;
+    if (!new_password || new_password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+      [password_hash, req.user.id]
+    );
+
+    // Generate a new token
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    const token = generateToken(rows[0]);
+
+    res.json({ success: true, token });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'Failed to change password' });
   }
 });
 
@@ -117,13 +107,140 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     const isAdmin = roles.some(r => r.role === 'admin');
 
     res.json({
-      user: req.user,
+      user: { id: req.user.id, lrn: req.user.lrn, full_name: req.user.full_name },
       profile,
       isAdmin,
+      must_change_password: !!req.user.must_change_password,
     });
   } catch (err) {
     console.error('Me error:', err);
     res.status(500).json({ error: 'Failed to fetch user info' });
+  }
+});
+
+// ─── Voter Management (Admin only) ─────────────────────────────
+
+// List all voters
+app.get('/api/voters', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT u.id, u.lrn, u.full_name, u.must_change_password, u.created_at,
+             p.grade_level, p.section, p.has_voted
+      FROM users u
+      LEFT JOIN profiles p ON p.user_id = u.id
+      INNER JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'voter'
+      ORDER BY u.created_at DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('List voters error:', err);
+    res.status(500).json({ error: 'Failed to fetch voters' });
+  }
+});
+
+// Add a new voter
+app.post('/api/voters', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { lrn, full_name, grade_level, section } = req.body;
+    if (!lrn || !full_name) {
+      return res.status(400).json({ error: 'LRN and full name are required' });
+    }
+
+    // Check if LRN already exists
+    const [existing] = await pool.query('SELECT id FROM users WHERE lrn = ?', [lrn]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'LRN already registered' });
+    }
+
+    const id = uuidv4();
+    // Default password = LRN
+    const password_hash = await bcrypt.hash(lrn, 10);
+
+    await pool.query(
+      'INSERT INTO users (id, lrn, password_hash, full_name, must_change_password) VALUES (?, ?, ?, ?, 1)',
+      [id, lrn, password_hash, full_name]
+    );
+
+    // Create profile
+    await pool.query(
+      'INSERT INTO profiles (id, user_id, full_name, grade_level, section) VALUES (?, ?, ?, ?, ?)',
+      [uuidv4(), id, full_name, grade_level || null, section || null]
+    );
+
+    // Assign voter role
+    await pool.query(
+      'INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)',
+      [uuidv4(), id, 'voter']
+    );
+
+    res.json({ id, lrn, full_name, grade_level, section });
+  } catch (err) {
+    console.error('Add voter error:', err);
+    res.status(500).json({ error: 'Failed to add voter' });
+  }
+});
+
+// Update voter info
+app.put('/api/voters/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { lrn, full_name, grade_level, section } = req.body;
+    if (!lrn || !full_name) {
+      return res.status(400).json({ error: 'LRN and full name are required' });
+    }
+
+    // Check for duplicate LRN (excluding current user)
+    const [existing] = await pool.query('SELECT id FROM users WHERE lrn = ? AND id != ?', [lrn, req.params.id]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'LRN already in use by another account' });
+    }
+
+    await pool.query(
+      'UPDATE users SET lrn = ?, full_name = ? WHERE id = ?',
+      [lrn, full_name, req.params.id]
+    );
+
+    await pool.query(
+      'UPDATE profiles SET full_name = ?, grade_level = ?, section = ? WHERE user_id = ?',
+      [full_name, grade_level || null, section || null, req.params.id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update voter error:', err);
+    res.status(500).json({ error: 'Failed to update voter' });
+  }
+});
+
+// Delete a voter
+app.delete('/api/voters/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    // This cascades to profiles, user_roles, and votes due to FK constraints
+    await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete voter error:', err);
+    res.status(500).json({ error: 'Failed to delete voter' });
+  }
+});
+
+// Reset voter password back to LRN
+app.post('/api/voters/:id/reset-password', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT lrn FROM users WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Voter not found' });
+    }
+
+    const password_hash = await bcrypt.hash(rows[0].lrn, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?',
+      [password_hash, req.params.id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
@@ -294,8 +411,12 @@ app.put('/api/election-settings/:id', requireAuth, requireAdmin, async (req, res
 
 app.get('/api/stats', async (req, res) => {
   try {
-    const [[{ voterCount }]] = await pool.query('SELECT COUNT(*) as voterCount FROM profiles');
-    const [[{ votedCount }]] = await pool.query('SELECT COUNT(*) as votedCount FROM profiles WHERE has_voted = 1');
+    const [[{ voterCount }]] = await pool.query(
+      "SELECT COUNT(*) as voterCount FROM profiles p INNER JOIN user_roles ur ON ur.user_id = p.user_id AND ur.role = 'voter'"
+    );
+    const [[{ votedCount }]] = await pool.query(
+      "SELECT COUNT(*) as votedCount FROM profiles p INNER JOIN user_roles ur ON ur.user_id = p.user_id AND ur.role = 'voter' WHERE p.has_voted = 1"
+    );
     const [[{ totalVotes }]] = await pool.query('SELECT COUNT(*) as totalVotes FROM votes');
     const [[{ positionCount }]] = await pool.query('SELECT COUNT(*) as positionCount FROM positions');
 

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, X, Home, Users, Vote, BarChart3, Settings, Shield, LogOut, LogIn } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import schoolSeal from "@/assets/school-seal.jpg";
@@ -7,7 +7,18 @@ import schoolSeal from "@/assets/school-seal.jpg";
 export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { user, isAdmin, profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const { user, isAdmin, profile, mustChangePassword, signOut } = useAuth();
+
+  // Force redirect to change-password if required
+  useEffect(() => {
+    if (user && mustChangePassword && location.pathname !== "/change-password") {
+      navigate("/change-password");
+    }
+  }, [user, mustChangePassword, location.pathname, navigate]);
+
+  // If must change password, hide all nav — only show the change password page
+  const showNav = !mustChangePassword;
 
   const navItems = [
     { label: "Dashboard", path: "/", icon: Home },
@@ -32,43 +43,53 @@ export default function Layout({ children }) {
             <span className="sm:hidden text-sm font-display font-bold text-primary-foreground">BNHS Votes</span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {navItems.map((item) => {
-              const active = location.pathname === item.path;
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    active ? "bg-gold/20 text-gold" : "text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/5"
-                  }`}
-                >
-                  <item.icon className="w-4 h-4" />
-                  {item.label}
+          {showNav && (
+            <nav className="hidden md:flex items-center gap-1">
+              {navItems.map((item) => {
+                const active = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                      active ? "bg-gold/20 text-gold" : "text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/5"
+                    }`}
+                  >
+                    <item.icon className="w-4 h-4" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+              {user ? (
+                <div className="flex items-center gap-2 ml-2 pl-2 border-l border-primary-foreground/15">
+                  <span className="text-xs text-primary-foreground/60 max-w-[120px] truncate">{profile?.full_name || user.full_name}</span>
+                  <button onClick={signOut} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <Link to="/auth" className="flex items-center gap-2 ml-2 px-4 py-2 rounded-lg gradient-gold text-accent-foreground text-sm font-semibold shadow-gold hover:opacity-90 transition-opacity">
+                  <LogIn className="w-4 h-4" />
+                  Sign In
                 </Link>
-              );
-            })}
-            {user ? (
-              <div className="flex items-center gap-2 ml-2 pl-2 border-l border-primary-foreground/15">
-                <span className="text-xs text-primary-foreground/60 max-w-[120px] truncate">{profile?.full_name || user.email}</span>
-                <button onClick={signOut} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <Link to="/auth" className="flex items-center gap-2 ml-2 px-4 py-2 rounded-lg gradient-gold text-accent-foreground text-sm font-semibold shadow-gold hover:opacity-90 transition-opacity">
-                <LogIn className="w-4 h-4" />
-                Sign In
-              </Link>
-            )}
-          </nav>
+              )}
+            </nav>
+          )}
 
-          <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden p-2 rounded-lg text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors">
-            {mobileOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
+          {showNav && (
+            <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden p-2 rounded-lg text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors">
+              {mobileOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+          )}
+
+          {!showNav && user && (
+            <button onClick={signOut} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
-        {mobileOpen && (
+        {showNav && mobileOpen && (
           <nav className="md:hidden border-t border-primary-foreground/10 pb-4 animate-fade-in">
             {navItems.map((item) => {
               const active = location.pathname === item.path;
@@ -84,7 +105,7 @@ export default function Layout({ children }) {
               <button onClick={() => { signOut(); setMobileOpen(false); }}
                 className="flex items-center gap-3 mx-4 mt-1 px-4 py-3 rounded-lg text-sm font-medium text-primary-foreground/70 hover:text-primary-foreground w-full text-left">
                 <LogOut className="w-4 h-4" />
-                Sign Out ({profile?.full_name || user.email})
+                Sign Out ({profile?.full_name || user.full_name})
               </button>
             ) : (
               <Link to="/auth" onClick={() => setMobileOpen(false)}

@@ -4,12 +4,13 @@
 CREATE DATABASE IF NOT EXISTS batuan_voting CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE batuan_voting;
 
--- Users table (replaces Supabase auth.users)
+-- Users table (login via LRN for students, username for admin)
 CREATE TABLE IF NOT EXISTS users (
   id CHAR(36) PRIMARY KEY,
-  email VARCHAR(255) NOT NULL UNIQUE,
+  lrn VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   full_name VARCHAR(100) NOT NULL,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   student_id VARCHAR(50) DEFAULT NULL,
   grade_level VARCHAR(50) DEFAULT NULL,
   section VARCHAR(50) DEFAULT NULL,
-  has_voted TINYINT(1) NOT NULL DEFAULT 0,
+  has_voted BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -85,7 +86,7 @@ CREATE TABLE IF NOT EXISTS election_settings (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- Vote counts view (replaces Supabase vote_counts view)
+-- Vote counts view
 CREATE OR REPLACE VIEW vote_counts AS
   SELECT
     c.id AS candidate_id,
@@ -118,11 +119,11 @@ INSERT INTO positions (id, title, display_order) VALUES
   (UUID(), 'Peace Officer', 7),
   (UUID(), 'Grade Representative', 8);
 
--- Seed: default admin user (password: admin123)
+-- Seed: default admin user (username: admin, password: admin123)
 -- bcrypt hash for 'admin123'
 SET @admin_id = UUID();
-INSERT INTO users (id, email, password_hash, full_name)
-VALUES (@admin_id, 'admin@bnhs.edu.ph', '$2a$10$8KzaNdKIMyOkASCEqhPMsu6d6earHGnMSiGG1T1J6ELMacw9GRGCa', 'Administrator');
+INSERT INTO users (id, lrn, password_hash, full_name, must_change_password)
+VALUES (@admin_id, 'admin', '$2a$10$qJuWvaZPekXNKtP8hr60SeYNgdeZVoze0/nRIQxgmWrglNH7ObvY.', 'Administrator', FALSE);
 
 INSERT INTO profiles (id, user_id, full_name)
 VALUES (UUID(), @admin_id, 'Administrator');
