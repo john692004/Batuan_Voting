@@ -55,9 +55,11 @@ export default function CandidateCard({
             <span>·</span>
             <span>{candidate.section}</span>
           </div>
+          {candidate.election_type !== 'classroom' && candidate.party_list && (
           <span className={`inline-block mt-2 px-3 py-0.5 rounded-full text-xs font-medium border ${partyColors[candidate.party_list] || "bg-muted text-muted-foreground border-border"}`}>
             {candidate.party_list}
           </span>
+          )}
           {candidate.motto && <p className="text-xs text-muted-foreground italic mt-3 leading-relaxed">"{candidate.motto}"</p>}
         </div>
         {showVotes && (

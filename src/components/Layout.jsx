@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Menu, X, Home, Users, Vote, BarChart3, Settings, Shield, LogOut, LogIn } from "lucide-react";
+import { Menu, X, Home, Users, Vote, BarChart3, Settings, Shield, LogOut, LogIn, School, GraduationCap } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useElection } from "@/contexts/ElectionContext";
 import schoolSeal from "@/assets/school-seal.jpg";
 
 export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { user, isAdmin, profile, mustChangePassword, signOut } = useAuth();
+  const { electionType, setElectionType, currentSection } = useElection();
 
   // Force redirect to change-password if required
   useEffect(() => {
@@ -28,6 +31,10 @@ export default function Layout({ children }) {
     ...(isAdmin ? [{ label: "Admin", path: "/admin", icon: Settings }] : []),
   ];
 
+  const subtitleText = electionType === 'classroom'
+    ? `Classroom Election${currentSection ? ` — ${currentSection}` : ''}`
+    : 'SSLG Election System';
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="gradient-navy sticky top-0 z-50 shadow-elegant">
@@ -38,42 +45,72 @@ export default function Layout({ children }) {
               <h1 className="text-sm md:text-base font-display font-bold text-primary-foreground leading-tight">
                 Batuan National High School
               </h1>
-              <p className="text-xs text-gold font-medium tracking-wide">SSLG Election System</p>
+              <p className="text-xs text-gold font-medium tracking-wide">{subtitleText}</p>
             </div>
             <span className="sm:hidden text-sm font-display font-bold text-primary-foreground">BNHS Votes</span>
           </Link>
 
           {showNav && (
-            <nav className="hidden md:flex items-center gap-1">
-              {navItems.map((item) => {
-                const active = location.pathname === item.path;
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      active ? "bg-gold/20 text-gold" : "text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/5"
+            <div className="hidden md:flex items-center gap-1">
+              {/* Election Type Switcher */}
+              {user && (
+                <div className="flex items-center bg-primary-foreground/10 rounded-lg p-0.5 mr-2">
+                  <button
+                    onClick={() => setElectionType('sslg')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      electionType === 'sslg'
+                        ? 'bg-gold text-accent-foreground shadow-sm'
+                        : 'text-primary-foreground/60 hover:text-primary-foreground'
                     }`}
                   >
-                    <item.icon className="w-4 h-4" />
-                    {item.label}
-                  </Link>
-                );
-              })}
-              {user ? (
-                <div className="flex items-center gap-2 ml-2 pl-2 border-l border-primary-foreground/15">
-                  <span className="text-xs text-primary-foreground/60 max-w-[120px] truncate">{profile?.full_name || user.full_name}</span>
-                  <button onClick={signOut} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
-                    <LogOut className="w-4 h-4" />
+                    <School className="w-3.5 h-3.5" />
+                    SSLG
+                  </button>
+                  <button
+                    onClick={() => setElectionType('classroom')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      electionType === 'classroom'
+                        ? 'bg-gold text-accent-foreground shadow-sm'
+                        : 'text-primary-foreground/60 hover:text-primary-foreground'
+                    }`}
+                  >
+                    <GraduationCap className="w-3.5 h-3.5" />
+                    Classroom
                   </button>
                 </div>
-              ) : (
-                <Link to="/auth" className="flex items-center gap-2 ml-2 px-4 py-2 rounded-lg gradient-gold text-accent-foreground text-sm font-semibold shadow-gold hover:opacity-90 transition-opacity">
-                  <LogIn className="w-4 h-4" />
-                  Sign In
-                </Link>
               )}
-            </nav>
+
+              <nav className="flex items-center gap-1">
+                {navItems.map((item) => {
+                  const active = location.pathname === item.path;
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                        active ? "bg-gold/20 text-gold" : "text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/5"
+                      }`}
+                    >
+                      <item.icon className="w-4 h-4" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+                {user ? (
+                  <div className="flex items-center gap-2 ml-2 pl-2 border-l border-primary-foreground/15">
+                    <span className="text-xs text-primary-foreground/60 max-w-[120px] truncate">{profile?.full_name || user.full_name}</span>
+                    <button onClick={() => setShowLogoutConfirm(true)} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <Link to="/auth" className="flex items-center gap-2 ml-2 px-4 py-2 rounded-lg gradient-gold text-accent-foreground text-sm font-semibold shadow-gold hover:opacity-90 transition-opacity">
+                    <LogIn className="w-4 h-4" />
+                    Sign In
+                  </Link>
+                )}
+              </nav>
+            </div>
           )}
 
           {showNav && (
@@ -83,7 +120,7 @@ export default function Layout({ children }) {
           )}
 
           {!showNav && user && (
-            <button onClick={signOut} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
+            <button onClick={() => setShowLogoutConfirm(true)} className="p-2 rounded-lg text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/5 transition-colors" title="Sign Out">
               <LogOut className="w-4 h-4" />
             </button>
           )}
@@ -91,6 +128,34 @@ export default function Layout({ children }) {
 
         {showNav && mobileOpen && (
           <nav className="md:hidden border-t border-primary-foreground/10 pb-4 animate-fade-in">
+            {/* Mobile Election Type Switcher */}
+            {user && (
+              <div className="flex items-center gap-1 mx-4 mt-3 mb-1 p-1 bg-primary-foreground/10 rounded-lg">
+                <button
+                  onClick={() => { setElectionType('sslg'); }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                    electionType === 'sslg'
+                      ? 'bg-gold text-accent-foreground shadow-sm'
+                      : 'text-primary-foreground/60'
+                  }`}
+                >
+                  <School className="w-3.5 h-3.5" />
+                  SSLG Election
+                </button>
+                <button
+                  onClick={() => { setElectionType('classroom'); }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                    electionType === 'classroom'
+                      ? 'bg-gold text-accent-foreground shadow-sm'
+                      : 'text-primary-foreground/60'
+                  }`}
+                >
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  Classroom
+                </button>
+              </div>
+            )}
+
             {navItems.map((item) => {
               const active = location.pathname === item.path;
               return (
@@ -102,7 +167,7 @@ export default function Layout({ children }) {
               );
             })}
             {user ? (
-              <button onClick={() => { signOut(); setMobileOpen(false); }}
+              <button onClick={() => { setShowLogoutConfirm(true); setMobileOpen(false); }}
                 className="flex items-center gap-3 mx-4 mt-1 px-4 py-3 rounded-lg text-sm font-medium text-primary-foreground/70 hover:text-primary-foreground w-full text-left">
                 <LogOut className="w-4 h-4" />
                 Sign Out ({profile?.full_name || user.full_name})
@@ -129,6 +194,43 @@ export default function Layout({ children }) {
           <p className="text-xs text-primary-foreground/50">© 2026 Batuan National High School — Batuan, Bohol, Philippines</p>
         </div>
       </footer>
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowLogoutConfirm(false)}>
+          <div className="bg-card rounded-2xl border border-border p-6 shadow-2xl w-full max-w-sm animate-scale-in" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display font-bold text-foreground text-lg flex items-center gap-2">
+                <LogOut className="w-5 h-5 text-gold" /> Confirm Logout
+              </h3>
+              <button onClick={() => setShowLogoutConfirm(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              Are you sure you want to sign out? You will need to sign in again to access your account.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button 
+                onClick={() => setShowLogoutConfirm(false)} 
+                className="px-5 py-2.5 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  signOut();
+                  setShowLogoutConfirm(false);
+                }}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl gradient-gold text-accent-foreground font-semibold text-sm shadow-gold hover:opacity-90 transition-opacity"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

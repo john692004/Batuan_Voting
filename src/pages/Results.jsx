@@ -2,25 +2,32 @@ import { useState } from "react";
 import { BarChart3, Trophy, TrendingUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import api from "@/api/client";
+import { useElection } from "@/contexts/ElectionContext";
 import StatCard from "@/components/StatCard";
 
 export default function Results() {
   const [activePosition, setActivePosition] = useState("all");
+  const { electionType, currentSection } = useElection();
+
+  const isClassroom = electionType === 'classroom';
+  const queryParams = isClassroom && currentSection
+    ? `?type=classroom&section=${encodeURIComponent(currentSection)}`
+    : '?type=sslg';
 
   const { data: positions } = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => api.get('/positions'),
+    queryKey: ["positions", electionType, currentSection],
+    queryFn: () => api.get(`/positions${queryParams}`),
   });
 
   const { data: voteCounts } = useQuery({
-    queryKey: ["vote-counts"],
-    queryFn: () => api.get('/votes/counts'),
+    queryKey: ["vote-counts", electionType, currentSection],
+    queryFn: () => api.get(`/votes/counts${queryParams}`),
     refetchInterval: 10000,
   });
 
   const { data: stats } = useQuery({
-    queryKey: ["stats"],
-    queryFn: () => api.get('/stats'),
+    queryKey: ["stats", electionType, currentSection],
+    queryFn: () => api.get(`/stats${queryParams}`),
   });
 
   const totalVotes = (voteCounts ?? []).reduce((sum, vc) => sum + (vc.vote_count ?? 0), 0);
@@ -36,14 +43,22 @@ export default function Results() {
 
   const filtered = activePosition === "all" ? grouped : grouped.filter((g) => g.position.id === activePosition);
 
+  const pageTitle = isClassroom
+    ? `Results — ${currentSection || 'Classroom'}`
+    : 'Election Results';
+
+  const pageDesc = isClassroom
+    ? `Live results for Classroom Officers Election${currentSection ? ` — ${currentSection}` : ''}`
+    : 'Live results for SSLG Election 2026';
+
   return (
     <div className="container py-8 md:py-12">
       <div className="mb-8">
         <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground flex items-center gap-3">
           <BarChart3 className="w-8 h-8 text-gold" />
-          Election Results
+          {pageTitle}
         </h1>
-        <p className="text-muted-foreground mt-1">Live results for SSLG Election 2026</p>
+        <p className="text-muted-foreground mt-1">{pageDesc}</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mb-8">

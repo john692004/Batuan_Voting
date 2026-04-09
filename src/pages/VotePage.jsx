@@ -3,6 +3,7 @@ import { Vote, ChevronRight, ChevronLeft, CheckCircle2, AlertCircle, ShieldAlert
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useElection } from "@/contexts/ElectionContext";
 import { useToast } from "@/hooks/use-toast";
 import CandidateCard from "@/components/CandidateCard";
 import { useNavigate } from "react-router-dom";
@@ -12,18 +13,24 @@ export default function VotePage() {
   const [selections, setSelections] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const { user, profile, refreshProfile } = useAuth();
+  const { electionType, currentSection } = useElection();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  const isClassroom = electionType === 'classroom';
+  const queryParams = isClassroom && currentSection
+    ? `?type=classroom&section=${encodeURIComponent(currentSection)}`
+    : '?type=sslg';
+
   const { data: positions } = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => api.get('/positions'),
+    queryKey: ["positions", electionType, currentSection],
+    queryFn: () => api.get(`/positions${queryParams}`),
   });
 
   const { data: candidates } = useQuery({
-    queryKey: ["candidates"],
-    queryFn: () => api.get('/candidates'),
+    queryKey: ["candidates", electionType, currentSection],
+    queryFn: () => api.get(`/candidates${queryParams}`),
   });
 
   const submitVotes = useMutation({
@@ -39,14 +46,16 @@ export default function VotePage() {
 
       if (votes.length === 0) throw new Error("No votes selected");
 
-      await api.post('/votes', { votes });
+      await api.post('/votes', { votes, election_type: electionType });
     },
     onSuccess: () => {
       setSubmitted(true);
       refreshProfile();
       queryClient.invalidateQueries({ queryKey: ["vote-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["vote-counts-home"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
-      toast({ title: "Vote submitted!", description: "Your vote has been recorded securely." });
+      const electionLabel = isClassroom ? `Classroom Officers Election — ${currentSection}` : 'SSLG Election 2026';
+      toast({ title: "Vote submitted!", description: `Your vote for ${electionLabel} has been recorded securely.` });
     },
     onError: (err) => {
       const msg = err.message?.includes("duplicate") ? "You have already voted for this position." : err.message;
@@ -65,18 +74,36 @@ export default function VotePage() {
     );
   }
 
-  if (profile?.has_voted) {
+  // Check if no section for classroom election
+  if (isClassroom && !currentSection) {
+    return (
+      <div className="container py-16 text-center animate-fade-in">
+        <AlertCircle className="w-16 h-16 text-gold mx-auto mb-4" />
+        <h1 className="text-2xl font-display font-bold text-foreground mb-2">No Section Assigned</h1>
+        <p className="text-muted-foreground mb-6">You need a section assigned to your profile to participate in classroom elections.</p>
+        <button onClick={() => navigate("/")} className="px-6 py-3 rounded-xl gradient-navy text-primary-foreground font-semibold">Back to Dashboard</button>
+      </div>
+    );
+  }
+
+  // Check has_voted for the appropriate election type
+  const hasVoted = isClassroom ? profile?.has_voted_classroom : profile?.has_voted_sslg;
+
+  if (hasVoted) {
     return (
       <div className="container py-16 text-center animate-fade-in">
         <CheckCircle2 className="w-16 h-16 text-gold mx-auto mb-4" />
         <h1 className="text-2xl font-display font-bold text-foreground mb-2">You've Already Voted</h1>
-        <p className="text-muted-foreground mb-6">Thank you for participating! You can view the results below.</p>
+        <p className="text-muted-foreground mb-6">
+          Thank you for participating in the {isClassroom ? `Classroom Officers Election — ${currentSection}` : 'SSLG Election'}! You can view the results below.
+        </p>
         <button onClick={() => navigate("/results")} className="px-6 py-3 rounded-xl gradient-navy text-primary-foreground font-semibold">View Results</button>
       </div>
     );
   }
 
   if (submitted) {
+    const electionLabel = isClassroom ? `Classroom Officers Election — ${currentSection}` : 'SSLG Election 2026';
     return (
       <div className="container py-16 md:py-24">
         <div className="max-w-lg mx-auto text-center animate-scale-in">
@@ -84,7 +111,7 @@ export default function VotePage() {
             <CheckCircle2 className="w-10 h-10 text-accent-foreground" />
           </div>
           <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-3">Vote Submitted!</h1>
-          <p className="text-muted-foreground mb-2">Thank you for participating in the SSLG Election 2026.</p>
+          <p className="text-muted-foreground mb-2">Thank you for participating in the {electionLabel}.</p>
           <div className="mt-8 p-4 bg-card rounded-xl border border-border">
             <p className="text-sm font-medium text-foreground mb-3">Your Selections:</p>
             {Object.entries(selections).filter(([, v]) => v).map(([posId, candId]) => {
@@ -114,15 +141,20 @@ export default function VotePage() {
     }));
   };
 
+  const voteTitle = isClassroom ? `Vote — ${currentSection}` : 'Cast Your Vote';
+
   return (
     <div className="container py-8 md:py-12">
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground flex items-center gap-3">
             <Vote className="w-8 h-8 text-gold" />
-            Cast Your Vote
+            {voteTitle}
           </h1>
           <p className="text-muted-foreground mt-1">Select your preferred candidate for each position</p>
+          {isClassroom && (
+            <p className="text-xs text-gold mt-1">Classroom Officers Election — {currentSection}</p>
+          )}
         </div>
 
         <div className="mb-8">

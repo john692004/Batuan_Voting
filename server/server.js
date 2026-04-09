@@ -27,6 +27,17 @@ const upload = multer({
   },
 });
 
+// Default classroom positions (used when setting up a section election)
+const DEFAULT_CLASSROOM_POSITIONS = [
+  { title: 'Mayor', display_order: 1 },
+  { title: 'Vice Mayor', display_order: 2 },
+  { title: 'Secretary', display_order: 3 },
+  { title: 'Treasurer', display_order: 4 },
+  { title: 'Auditor', display_order: 5 },
+  { title: 'P.I.O.', display_order: 6 },
+  { title: 'Peace Officer', display_order: 7 },
+];
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -95,7 +106,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
     const [profiles] = await pool.query(
-      'SELECT full_name, has_voted, grade_level, section FROM profiles WHERE user_id = ?',
+      'SELECT full_name, has_voted_sslg, has_voted_classroom, grade_level, section FROM profiles WHERE user_id = ?',
       [req.user.id]
     );
     const [roles] = await pool.query(
@@ -125,7 +136,7 @@ app.get('/api/voters', requireAuth, requireAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT u.id, u.lrn, u.full_name, u.must_change_password, u.created_at,
-             p.grade_level, p.section, p.has_voted
+             p.grade_level, p.section, p.has_voted_sslg, p.has_voted_classroom
       FROM users u
       LEFT JOIN profiles p ON p.user_id = u.id
       INNER JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'voter'
@@ -144,6 +155,9 @@ app.post('/api/voters', requireAuth, requireAdmin, async (req, res) => {
     const { lrn, full_name, grade_level, section } = req.body;
     if (!lrn || !full_name) {
       return res.status(400).json({ error: 'LRN and full name are required' });
+    }
+    if (!/^\d{12}$/.test(lrn)) {
+      return res.status(400).json({ error: 'LRN must be exactly 12 digits (numbers only)' });
     }
 
     // Check if LRN already exists
@@ -186,6 +200,9 @@ app.put('/api/voters/:id', requireAuth, requireAdmin, async (req, res) => {
     const { lrn, full_name, grade_level, section } = req.body;
     if (!lrn || !full_name) {
       return res.status(400).json({ error: 'LRN and full name are required' });
+    }
+    if (!/^\d{12}$/.test(lrn)) {
+      return res.status(400).json({ error: 'LRN must be exactly 12 digits (numbers only)' });
     }
 
     // Check for duplicate LRN (excluding current user)
@@ -248,10 +265,56 @@ app.post('/api/voters/:id/reset-password', requireAuth, requireAdmin, async (req
 
 app.get('/api/positions', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM positions ORDER BY display_order');
+    const { type, section } = req.query;
+    let sql = 'SELECT * FROM positions';
+    const params = [];
+
+    if (type === 'classroom' && section) {
+      sql += ' WHERE election_type = ? AND section = ?';
+      params.push('classroom', section);
+    } else if (type === 'classroom') {
+      sql += ' WHERE election_type = ?';
+      params.push('classroom');
+    } else {
+      // Default: SSLG positions
+      sql += ' WHERE election_type = ?';
+      params.push(type || 'sslg');
+    }
+
+    sql += ' ORDER BY display_order';
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch positions' });
+  }
+});
+
+// Create a position (admin)
+app.post('/api/positions', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { title, display_order, election_type, section } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+
+    const id = uuidv4();
+    await pool.query(
+      'INSERT INTO positions (id, title, display_order, election_type, section) VALUES (?, ?, ?, ?, ?)',
+      [id, title, display_order || 0, election_type || 'sslg', section || null]
+    );
+
+    res.json({ id, title, display_order, election_type, section });
+  } catch (err) {
+    console.error('Add position error:', err);
+    res.status(500).json({ error: 'Failed to add position' });
+  }
+});
+
+// Delete a position (admin)
+app.delete('/api/positions/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM positions WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete position' });
   }
 });
 
@@ -259,7 +322,22 @@ app.get('/api/positions', async (req, res) => {
 
 app.get('/api/candidates', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM candidates');
+    const { type, section } = req.query;
+    let sql = 'SELECT * FROM candidates';
+    const params = [];
+
+    if (type === 'classroom' && section) {
+      sql += ' WHERE election_type = ? AND section = ?';
+      params.push('classroom', section);
+    } else if (type === 'classroom') {
+      sql += ' WHERE election_type = ?';
+      params.push('classroom');
+    } else {
+      sql += ' WHERE election_type = ?';
+      params.push(type || 'sslg');
+    }
+
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch candidates' });
@@ -268,19 +346,23 @@ app.get('/api/candidates', async (req, res) => {
 
 app.post('/api/candidates', requireAuth, requireAdmin, upload.single('photo'), async (req, res) => {
   try {
-    const { name, position_id, grade_level, section, party_list, motto } = req.body;
-    if (!name || !position_id || !grade_level || !section || !party_list) {
-      return res.status(400).json({ error: 'All fields are required' });
+    const { name, position_id, grade_level, section, party_list, motto, election_type } = req.body;
+    const eType = election_type || 'sslg';
+    if (!name || !position_id || !grade_level || !section) {
+      return res.status(400).json({ error: 'Name, position, grade level, and section are required' });
+    }
+    if (eType === 'sslg' && !party_list) {
+      return res.status(400).json({ error: 'Party list is required for SSLG elections' });
     }
 
     const id = uuidv4();
     const avatar_url = req.file ? `/uploads/${req.file.filename}` : null;
     await pool.query(
-      'INSERT INTO candidates (id, name, position_id, grade_level, section, party_list, motto, avatar_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, name, position_id, grade_level, section, party_list, motto || null, avatar_url]
+      'INSERT INTO candidates (id, name, position_id, grade_level, section, party_list, motto, avatar_url, election_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, name, position_id, grade_level, section, party_list || '', motto || null, avatar_url, eType]
     );
 
-    res.json({ id, name, position_id, grade_level, section, party_list, motto, avatar_url });
+    res.json({ id, name, position_id, grade_level, section, party_list: party_list || '', motto, avatar_url, election_type: eType });
   } catch (err) {
     console.error('Add candidate error:', err);
     res.status(500).json({ error: 'Failed to add candidate' });
@@ -289,9 +371,13 @@ app.post('/api/candidates', requireAuth, requireAdmin, upload.single('photo'), a
 
 app.put('/api/candidates/:id', requireAuth, requireAdmin, upload.single('photo'), async (req, res) => {
   try {
-    const { name, position_id, grade_level, section, party_list, motto } = req.body;
-    if (!name || !position_id || !grade_level || !section || !party_list) {
-      return res.status(400).json({ error: 'All fields are required' });
+    const { name, position_id, grade_level, section, party_list, motto, election_type } = req.body;
+    const eType = election_type || 'sslg';
+    if (!name || !position_id || !grade_level || !section) {
+      return res.status(400).json({ error: 'Name, position, grade level, and section are required' });
+    }
+    if (eType === 'sslg' && !party_list) {
+      return res.status(400).json({ error: 'Party list is required for SSLG elections' });
     }
 
     let avatar_url = undefined;
@@ -299,8 +385,8 @@ app.put('/api/candidates/:id', requireAuth, requireAdmin, upload.single('photo')
       avatar_url = `/uploads/${req.file.filename}`;
     }
 
-    const fields = ['name = ?', 'position_id = ?', 'grade_level = ?', 'section = ?', 'party_list = ?', 'motto = ?'];
-    const values = [name, position_id, grade_level, section, party_list, motto || null];
+    const fields = ['name = ?', 'position_id = ?', 'grade_level = ?', 'section = ?', 'party_list = ?', 'motto = ?', 'election_type = ?'];
+    const values = [name, position_id, grade_level, section, party_list || '', motto || null, eType];
 
     if (avatar_url !== undefined) {
       fields.push('avatar_url = ?');
@@ -331,9 +417,31 @@ app.delete('/api/candidates/:id', requireAuth, requireAdmin, async (req, res) =>
 
 app.post('/api/votes', requireAuth, async (req, res) => {
   try {
-    const { votes } = req.body;
+    const { votes, election_type } = req.body;
+    const eType = election_type || 'sslg';
+
     if (!votes || !Array.isArray(votes) || votes.length === 0) {
       return res.status(400).json({ error: 'No votes provided' });
+    }
+
+    // For classroom elections, validate that voter's section matches
+    if (eType === 'classroom') {
+      const [profiles] = await pool.query('SELECT section FROM profiles WHERE user_id = ?', [req.user.id]);
+      if (!profiles[0]?.section) {
+        return res.status(400).json({ error: 'You must have a section assigned to vote in classroom elections' });
+      }
+
+      // Verify all candidates belong to the same section as the voter
+      const voterSection = profiles[0].section;
+      for (const vote of votes) {
+        const [cands] = await pool.query('SELECT section, election_type FROM candidates WHERE id = ?', [vote.candidate_id]);
+        if (cands.length === 0) {
+          return res.status(400).json({ error: 'Invalid candidate' });
+        }
+        if (cands[0].election_type !== 'classroom' || cands[0].section !== voterSection) {
+          return res.status(403).json({ error: 'You can only vote for candidates in your own section' });
+        }
+      }
     }
 
     const connection = await pool.getConnection();
@@ -343,14 +451,15 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       for (const vote of votes) {
         const id = uuidv4();
         await connection.query(
-          'INSERT INTO votes (id, voter_id, candidate_id, position_id) VALUES (?, ?, ?, ?)',
-          [id, req.user.id, vote.candidate_id, vote.position_id]
+          'INSERT INTO votes (id, voter_id, candidate_id, position_id, election_type) VALUES (?, ?, ?, ?, ?)',
+          [id, req.user.id, vote.candidate_id, vote.position_id, eType]
         );
       }
 
-      // Mark profile as voted
+      // Mark profile as voted for the appropriate election type
+      const votedColumn = eType === 'classroom' ? 'has_voted_classroom' : 'has_voted_sslg';
       await connection.query(
-        'UPDATE profiles SET has_voted = 1 WHERE user_id = ?',
+        `UPDATE profiles SET ${votedColumn} = 1 WHERE user_id = ?`,
         [req.user.id]
       );
 
@@ -373,7 +482,20 @@ app.post('/api/votes', requireAuth, async (req, res) => {
 
 app.get('/api/votes/counts', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM vote_counts ORDER BY display_order, vote_count DESC');
+    const { type, section } = req.query;
+    let sql = 'SELECT * FROM vote_counts';
+    const params = [];
+
+    if (type === 'classroom' && section) {
+      sql += ' WHERE election_type = ? AND section = ?';
+      params.push('classroom', section);
+    } else {
+      sql += ' WHERE election_type = ?';
+      params.push(type || 'sslg');
+    }
+
+    sql += ' ORDER BY display_order, vote_count DESC';
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch vote counts' });
@@ -384,8 +506,21 @@ app.get('/api/votes/counts', async (req, res) => {
 
 app.get('/api/election-settings', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM election_settings LIMIT 1');
-    res.json(rows[0] || null);
+    const { type, section } = req.query;
+
+    if (type === 'classroom' && section) {
+      const [rows] = await pool.query(
+        'SELECT * FROM election_settings WHERE election_type = ? AND section = ? LIMIT 1',
+        ['classroom', section]
+      );
+      res.json(rows[0] || null);
+    } else {
+      const [rows] = await pool.query(
+        'SELECT * FROM election_settings WHERE election_type = ? LIMIT 1',
+        [type || 'sslg']
+      );
+      res.json(rows[0] || null);
+    }
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch election settings' });
   }
@@ -393,13 +528,26 @@ app.get('/api/election-settings', async (req, res) => {
 
 app.put('/api/election-settings/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { status } = req.body;
-    if (!status) {
-      return res.status(400).json({ error: 'Status is required' });
+    const { status, name, school_year, election_date, voting_start, voting_end } = req.body;
+
+    const fields = [];
+    const values = [];
+
+    if (status)        { fields.push('status = ?');        values.push(status); }
+    if (name)          { fields.push('name = ?');          values.push(name); }
+    if (school_year)   { fields.push('school_year = ?');   values.push(school_year); }
+    if (election_date) { fields.push('election_date = ?'); values.push(election_date); }
+    if (voting_start)  { fields.push('voting_start = ?');  values.push(voting_start); }
+    if (voting_end)    { fields.push('voting_end = ?');    values.push(voting_end); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
     }
+
+    values.push(req.params.id);
     await pool.query(
-      'UPDATE election_settings SET status = ? WHERE id = ?',
-      [status, req.params.id]
+      `UPDATE election_settings SET ${fields.join(', ')} WHERE id = ?`,
+      values
     );
     res.json({ success: true });
   } catch (err) {
@@ -407,27 +555,183 @@ app.put('/api/election-settings/:id', requireAuth, requireAdmin, async (req, res
   }
 });
 
+// ─── Classroom Management (Admin only) ──────────────────────────
+
+// List all distinct sections from voter profiles
+app.get('/api/classroom/sections', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT DISTINCT section FROM profiles WHERE section IS NOT NULL AND section != '' ORDER BY section"
+    );
+    res.json(rows.map(r => r.section));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch sections' });
+  }
+});
+
+// Set up a classroom election for a section (creates default positions + election settings)
+app.post('/api/classroom/setup', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { section } = req.body;
+    if (!section) return res.status(400).json({ error: 'Section is required' });
+
+    // Check if this section already has classroom positions
+    const [existing] = await pool.query(
+      'SELECT id FROM positions WHERE election_type = ? AND section = ? LIMIT 1',
+      ['classroom', section]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'Classroom election already set up for this section' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // Create default positions for this section
+      for (const pos of DEFAULT_CLASSROOM_POSITIONS) {
+        await connection.query(
+          'INSERT INTO positions (id, title, display_order, election_type, section) VALUES (?, ?, ?, ?, ?)',
+          [uuidv4(), pos.title, pos.display_order, 'classroom', section]
+        );
+      }
+
+      // Create election settings for this section
+      await connection.query(
+        'INSERT INTO election_settings (id, name, school_year, election_date, status, election_type, section) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [uuidv4(), `Classroom Officers — ${section}`, '2025-2026', '2026-03-15', 'upcoming', 'classroom', section]
+      );
+
+      await connection.commit();
+      res.json({ success: true, message: `Classroom election set up for ${section}` });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error('Setup classroom error:', err);
+    res.status(500).json({ error: err.message || 'Failed to set up classroom election' });
+  }
+});
+
+// List all classroom elections (sections with their settings)
+app.get('/api/classroom/elections', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM election_settings WHERE election_type = 'classroom' ORDER BY section"
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch classroom elections' });
+  }
+});
+
 // ─── Stats ──────────────────────────────────────────────────────
 
 app.get('/api/stats', async (req, res) => {
   try {
+    const { type, section } = req.query;
+    const eType = type || 'sslg';
+
+    const votedCol = eType === 'classroom' ? 'has_voted_classroom' : 'has_voted_sslg';
+
+    let voterFilter = "INNER JOIN user_roles ur ON ur.user_id = p.user_id AND ur.role = 'voter'";
+    let votedFilter = voterFilter;
+    const voterParams = [];
+    const votedParams = [];
+
+    if (eType === 'classroom' && section) {
+      voterFilter += ' WHERE p.section = ?';
+      voterParams.push(section);
+      votedFilter += ` WHERE p.${votedCol} = 1 AND p.section = ?`;
+      votedParams.push(section);
+    } else if (eType === 'classroom') {
+      votedFilter += ` WHERE p.${votedCol} = 1`;
+    } else {
+      votedFilter += ` WHERE p.${votedCol} = 1`;
+    }
+
     const [[{ voterCount }]] = await pool.query(
-      "SELECT COUNT(*) as voterCount FROM profiles p INNER JOIN user_roles ur ON ur.user_id = p.user_id AND ur.role = 'voter'"
+      `SELECT COUNT(*) as voterCount FROM profiles p ${voterFilter}`,
+      voterParams
     );
     const [[{ votedCount }]] = await pool.query(
-      "SELECT COUNT(*) as votedCount FROM profiles p INNER JOIN user_roles ur ON ur.user_id = p.user_id AND ur.role = 'voter' WHERE p.has_voted = 1"
+      `SELECT COUNT(*) as votedCount FROM profiles p ${votedFilter}`,
+      votedParams
     );
-    const [[{ totalVotes }]] = await pool.query('SELECT COUNT(*) as totalVotes FROM votes');
-    const [[{ positionCount }]] = await pool.query('SELECT COUNT(*) as positionCount FROM positions');
+
+    // Total votes for this election type
+    let votesSql = "SELECT COUNT(*) as totalVotes FROM votes WHERE election_type = ?";
+    const votesParams = [eType];
+    if (eType === 'classroom' && section) {
+      // Get position IDs for this section, then count votes for those positions
+      votesSql = `SELECT COUNT(*) as totalVotes FROM votes v
+        INNER JOIN positions p ON p.id = v.position_id
+        WHERE v.election_type = ? AND p.section = ?`;
+      votesParams.push(section);
+    }
+    const [[{ totalVotes }]] = await pool.query(votesSql, votesParams);
+
+    // Position count
+    let posSql = "SELECT COUNT(*) as positionCount FROM positions WHERE election_type = ?";
+    const posParams = [eType];
+    if (eType === 'classroom' && section) {
+      posSql += ' AND section = ?';
+      posParams.push(section);
+    }
+    const [[{ positionCount }]] = await pool.query(posSql, posParams);
 
     res.json({ voterCount, votedCount, totalVotes, positionCount });
   } catch (err) {
+    console.error('Stats error:', err);
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
+
+// ─── Auto-End Scheduler ─────────────────────────────────────────
+// Runs every 60 seconds. Automatically marks 'ongoing' elections as
+// 'completed' once the current date+time has passed election_date + voting_end.
+
+async function autoEndElections() {
+  try {
+    // Get all currently ongoing elections
+    const [ongoing] = await pool.query(
+      "SELECT id, name, election_date, voting_end FROM election_settings WHERE status = 'ongoing'"
+    );
+
+    const now = new Date();
+
+    for (const election of ongoing) {
+      // Build the end datetime by combining election_date and voting_end
+      const dateStr = election.election_date instanceof Date
+        ? election.election_date.toISOString().slice(0, 10)
+        : String(election.election_date).slice(0, 10);
+
+      const endDateTime = new Date(`${dateStr}T${election.voting_end}`);
+
+      if (now >= endDateTime) {
+        await pool.query(
+          "UPDATE election_settings SET status = 'completed' WHERE id = ?",
+          [election.id]
+        );
+        console.log(`[Auto-End] Election "${election.name}" (${election.id}) automatically completed at ${now.toLocaleString()}.`);
+      }
+    }
+  } catch (err) {
+    console.error('[Auto-End] Scheduler error:', err.message);
+  }
+}
+
+// Run immediately on startup, then every 60 seconds
+autoEndElections();
+setInterval(autoEndElections, 60 * 1000);
 
 // ─── Start ──────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`Batuan Voting API server running on http://localhost:${PORT}`);
+  console.log('[Auto-End] Election auto-end scheduler is active (checks every 60s).');
 });

@@ -2,20 +2,27 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import api from "@/api/client";
+import { useElection } from "@/contexts/ElectionContext";
 import CandidateCard from "@/components/CandidateCard";
 
 export default function Candidates() {
   const [search, setSearch] = useState("");
   const [activePosition, setActivePosition] = useState("all");
+  const { electionType, currentSection } = useElection();
+
+  const isClassroom = electionType === 'classroom';
+  const queryParams = isClassroom && currentSection
+    ? `?type=classroom&section=${encodeURIComponent(currentSection)}`
+    : '?type=sslg';
 
   const { data: positions } = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => api.get('/positions'),
+    queryKey: ["positions", electionType, currentSection],
+    queryFn: () => api.get(`/positions${queryParams}`),
   });
 
   const { data: candidates } = useQuery({
-    queryKey: ["candidates"],
-    queryFn: () => api.get('/candidates'),
+    queryKey: ["candidates", electionType, currentSection],
+    queryFn: () => api.get(`/candidates${queryParams}`),
   });
 
   const filtered = (candidates ?? []).filter((c) => {
@@ -24,11 +31,18 @@ export default function Candidates() {
     return matchesSearch && matchesPosition;
   });
 
+  const pageTitle = isClassroom
+    ? `Candidates — ${currentSection || 'Classroom'}`
+    : 'Candidates';
+  const pageDesc = isClassroom
+    ? `Meet the candidates running for classroom officer positions${currentSection ? ` in ${currentSection}` : ''}`
+    : 'Meet the candidates running for SSLG positions';
+
   return (
     <div className="container py-8 md:py-12">
       <div className="mb-8">
-        <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground">Candidates</h1>
-        <p className="text-muted-foreground mt-1">Meet the candidates running for SSLG positions</p>
+        <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground">{pageTitle}</h1>
+        <p className="text-muted-foreground mt-1">{pageDesc}</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-8">
