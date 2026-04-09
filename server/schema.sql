@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS candidates (
   FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE CASCADE
 );
 
--- Votes (unique per voter + position + election type)
+-- Votes (unique per voter + candidate — allows multi-votes per position)
 CREATE TABLE IF NOT EXISTS votes (
   id CHAR(36) PRIMARY KEY,
   voter_id CHAR(36) NOT NULL,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS votes (
   position_id CHAR(36) NOT NULL,
   election_type ENUM('sslg', 'classroom') NOT NULL DEFAULT 'sslg',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_voter_position_type (voter_id, position_id, election_type),
+  UNIQUE KEY uq_voter_candidate_type (voter_id, candidate_id, election_type),
   FOREIGN KEY (voter_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE,
   FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE CASCADE
@@ -119,15 +119,21 @@ INSERT INTO election_settings (id, name, school_year, election_date, status, ele
 VALUES (UUID(), 'SSLG Election 2026', '2025-2026', '2026-03-15', 'ongoing', 'sslg');
 
 -- Seed: default SSLG positions
-INSERT INTO positions (id, title, display_order, election_type) VALUES
-  (UUID(), 'President', 1, 'sslg'),
-  (UUID(), 'Vice President', 2, 'sslg'),
-  (UUID(), 'Secretary', 3, 'sslg'),
-  (UUID(), 'Treasurer', 4, 'sslg'),
-  (UUID(), 'Auditor', 5, 'sslg'),
-  (UUID(), 'Public Information Officer', 6, 'sslg'),
-  (UUID(), 'Peace Officer', 7, 'sslg'),
-  (UUID(), 'Grade Representative', 8, 'sslg');
+-- max_votes = 2 for P.I.O. and Peace Officer (voters elect 2 per position)
+INSERT INTO positions (id, title, display_order, max_votes, election_type) VALUES
+  (UUID(), 'President',                  1, 1, 'sslg'),
+  (UUID(), 'Vice President',             2, 1, 'sslg'),
+  (UUID(), 'Secretary',                  3, 1, 'sslg'),
+  (UUID(), 'Treasurer',                  4, 1, 'sslg'),
+  (UUID(), 'Auditor',                    5, 1, 'sslg'),
+  (UUID(), 'Public Information Officer', 6, 2, 'sslg'),
+  (UUID(), 'Peace Officer',              7, 2, 'sslg'),
+  (UUID(), 'Grade 7 Representative',     8, 1, 'sslg'),
+  (UUID(), 'Grade 8 Representative',     9, 1, 'sslg'),
+  (UUID(), 'Grade 9 Representative',    10, 1, 'sslg'),
+  (UUID(), 'Grade 10 Representative',   11, 1, 'sslg'),
+  (UUID(), 'Grade 11 Representative',   12, 1, 'sslg'),
+  (UUID(), 'Grade 12 Representative',   13, 1, 'sslg');
 
 -- Seed: default admin user (username: admin, password: admin123)
 -- bcrypt hash for 'admin123'

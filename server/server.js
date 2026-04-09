@@ -28,14 +28,15 @@ const upload = multer({
 });
 
 // Default classroom positions (used when setting up a section election)
+// max_votes: 2 for P.I.O. and Peace Officer — voters can elect 2 per position
 const DEFAULT_CLASSROOM_POSITIONS = [
-  { title: 'Mayor', display_order: 1 },
-  { title: 'Vice Mayor', display_order: 2 },
-  { title: 'Secretary', display_order: 3 },
-  { title: 'Treasurer', display_order: 4 },
-  { title: 'Auditor', display_order: 5 },
-  { title: 'P.I.O.', display_order: 6 },
-  { title: 'Peace Officer', display_order: 7 },
+  { title: 'Mayor',        display_order: 1, max_votes: 1 },
+  { title: 'Vice Mayor',   display_order: 2, max_votes: 1 },
+  { title: 'Secretary',    display_order: 3, max_votes: 1 },
+  { title: 'Treasurer',    display_order: 4, max_votes: 1 },
+  { title: 'Auditor',      display_order: 5, max_votes: 1 },
+  { title: 'P.I.O.',       display_order: 6, max_votes: 2 },
+  { title: 'Peace Officer', display_order: 7, max_votes: 2 },
 ];
 
 const app = express();
@@ -265,7 +266,7 @@ app.post('/api/voters/:id/reset-password', requireAuth, requireAdmin, async (req
 
 app.get('/api/positions', async (req, res) => {
   try {
-    const { type, section } = req.query;
+    const { type, section, grade_level } = req.query;
     let sql = 'SELECT * FROM positions';
     const params = [];
 
@@ -282,7 +283,19 @@ app.get('/api/positions', async (req, res) => {
     }
 
     sql += ' ORDER BY display_order';
-    const [rows] = await pool.query(sql, params);
+    let [rows] = await pool.query(sql, params);
+
+    // For SSLG: if grade_level provided, filter Grade Representative positions
+    // so voters only see the representative slot for their own grade
+    if ((type === 'sslg' || !type) && grade_level) {
+      rows = rows.filter(p => {
+        // Keep non-representative positions as-is
+        if (!p.title.toLowerCase().includes('representative')) return true;
+        // For representative positions, only keep the one matching the voter's grade
+        return p.title.toLowerCase().includes(grade_level.toLowerCase());
+      });
+    }
+
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch positions' });
@@ -424,22 +437,78 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'No votes provided' });
     }
 
+    // Fetch voter profile (grade_level + section)
+    const [profiles] = await pool.query(
+      'SELECT grade_level, section FROM profiles WHERE user_id = ?',
+      [req.user.id]
+    );
+    const voterProfile = profiles[0] || {};
+
     // For classroom elections, validate that voter's section matches
     if (eType === 'classroom') {
-      const [profiles] = await pool.query('SELECT section FROM profiles WHERE user_id = ?', [req.user.id]);
-      if (!profiles[0]?.section) {
+      if (!voterProfile.section) {
         return res.status(400).json({ error: 'You must have a section assigned to vote in classroom elections' });
       }
 
       // Verify all candidates belong to the same section as the voter
-      const voterSection = profiles[0].section;
       for (const vote of votes) {
-        const [cands] = await pool.query('SELECT section, election_type FROM candidates WHERE id = ?', [vote.candidate_id]);
+        const [cands] = await pool.query(
+          'SELECT section, election_type FROM candidates WHERE id = ?',
+          [vote.candidate_id]
+        );
         if (cands.length === 0) {
           return res.status(400).json({ error: 'Invalid candidate' });
         }
-        if (cands[0].election_type !== 'classroom' || cands[0].section !== voterSection) {
+        if (cands[0].election_type !== 'classroom' || cands[0].section !== voterProfile.section) {
           return res.status(403).json({ error: 'You can only vote for candidates in your own section' });
+        }
+      }
+    }
+
+    // ── Validate max_votes per position ────────────────────────────────────
+    // Count how many votes are submitted per position
+    const votesByPosition = {};
+    for (const vote of votes) {
+      if (!votesByPosition[vote.position_id]) votesByPosition[vote.position_id] = [];
+      votesByPosition[vote.position_id].push(vote.candidate_id);
+    }
+
+    // Fetch position max_votes for all involved positions
+    const positionIds = Object.keys(votesByPosition);
+    const [positionRows] = await pool.query(
+      `SELECT id, title, max_votes FROM positions WHERE id IN (${positionIds.map(() => '?').join(',')})`,
+      positionIds
+    );
+    const positionMap = {};
+    for (const p of positionRows) positionMap[p.id] = p;
+
+    for (const [posId, candIds] of Object.entries(votesByPosition)) {
+      const pos = positionMap[posId];
+      if (!pos) return res.status(400).json({ error: 'Invalid position' });
+
+      if (candIds.length > pos.max_votes) {
+        return res.status(400).json({
+          error: `You can only vote for up to ${pos.max_votes} candidate(s) for ${pos.title}`
+        });
+      }
+
+      // ── SSLG Grade Representative restriction ────────────────────────────
+      if (eType === 'sslg' && pos.title.toLowerCase().includes('representative')) {
+        if (!voterProfile.grade_level) {
+          return res.status(403).json({ error: 'Your grade level must be set to vote for Grade Representatives' });
+        }
+        // Verify each candidate for this position matches voter's grade level
+        for (const candId of candIds) {
+          const [cands] = await pool.query(
+            'SELECT grade_level FROM candidates WHERE id = ?',
+            [candId]
+          );
+          if (cands.length === 0) return res.status(400).json({ error: 'Invalid candidate' });
+          if (cands[0].grade_level !== voterProfile.grade_level) {
+            return res.status(403).json({
+              error: `Grade Representatives: you may only vote for candidates from your grade level (${voterProfile.grade_level})`
+            });
+          }
         }
       }
     }
@@ -468,7 +537,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     } catch (err) {
       await connection.rollback();
       if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ error: 'You have already voted for this position' });
+        return res.status(400).json({ error: 'You have already voted for one of the selected candidates' });
       }
       throw err;
     } finally {
@@ -592,8 +661,8 @@ app.post('/api/classroom/setup', requireAuth, requireAdmin, async (req, res) => 
       // Create default positions for this section
       for (const pos of DEFAULT_CLASSROOM_POSITIONS) {
         await connection.query(
-          'INSERT INTO positions (id, title, display_order, election_type, section) VALUES (?, ?, ?, ?, ?)',
-          [uuidv4(), pos.title, pos.display_order, 'classroom', section]
+          'INSERT INTO positions (id, title, display_order, max_votes, election_type, section) VALUES (?, ?, ?, ?, ?, ?)',
+          [uuidv4(), pos.title, pos.display_order, pos.max_votes ?? 1, 'classroom', section]
         );
       }
 

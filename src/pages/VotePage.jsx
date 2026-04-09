@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 
 export default function VotePage() {
   const [currentStep, setCurrentStep] = useState(0);
+  // selections: { [positionId]: string[] }  (array of selected candidate IDs)
   const [selections, setSelections] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const { user, profile, refreshProfile } = useAuth();
@@ -19,30 +20,41 @@ export default function VotePage() {
   const navigate = useNavigate();
 
   const isClassroom = electionType === 'classroom';
+
+  // Build query params — for SSLG pass grade_level for Grade Rep filtering
+  const gradeLevel = profile?.grade_level;
+  const sslgParams = gradeLevel
+    ? `?type=sslg&grade_level=${encodeURIComponent(gradeLevel)}`
+    : '?type=sslg';
   const queryParams = isClassroom && currentSection
     ? `?type=classroom&section=${encodeURIComponent(currentSection)}`
-    : '?type=sslg';
+    : sslgParams;
 
   const { data: positions } = useQuery({
-    queryKey: ["positions", electionType, currentSection],
+    queryKey: ["positions", electionType, currentSection, gradeLevel],
     queryFn: () => api.get(`/positions${queryParams}`),
+    enabled: !!user,
   });
 
   const { data: candidates } = useQuery({
     queryKey: ["candidates", electionType, currentSection],
-    queryFn: () => api.get(`/candidates${queryParams}`),
+    queryFn: () => api.get(`/candidates${isClassroom && currentSection
+      ? `?type=classroom&section=${encodeURIComponent(currentSection)}`
+      : '?type=sslg'}`),
+    enabled: !!user,
   });
 
   const submitVotes = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Not authenticated");
 
-      const votes = Object.entries(selections)
-        .filter(([, candidateId]) => candidateId)
-        .map(([positionId, candidateId]) => ({
-          candidate_id: candidateId,
-          position_id: positionId,
-        }));
+      // Build flat vote array: one entry per candidate selected
+      const votes = [];
+      for (const [positionId, candIds] of Object.entries(selections)) {
+        for (const candidateId of (candIds || [])) {
+          if (candidateId) votes.push({ candidate_id: candidateId, position_id: positionId });
+        }
+      }
 
       if (votes.length === 0) throw new Error("No votes selected");
 
@@ -58,7 +70,9 @@ export default function VotePage() {
       toast({ title: "Vote submitted!", description: `Your vote for ${electionLabel} has been recorded securely.` });
     },
     onError: (err) => {
-      const msg = err.message?.includes("duplicate") ? "You have already voted for this position." : err.message;
+      const msg = err.message?.includes("duplicate") || err.message?.includes("already voted")
+        ? "You have already voted for one of the selected candidates."
+        : err.message;
       toast({ title: "Vote failed", description: msg, variant: "destructive" });
     },
   });
@@ -114,15 +128,17 @@ export default function VotePage() {
           <p className="text-muted-foreground mb-2">Thank you for participating in the {electionLabel}.</p>
           <div className="mt-8 p-4 bg-card rounded-xl border border-border">
             <p className="text-sm font-medium text-foreground mb-3">Your Selections:</p>
-            {Object.entries(selections).filter(([, v]) => v).map(([posId, candId]) => {
+            {Object.entries(selections).flatMap(([posId, candIds]) => {
               const pos = (positions ?? []).find((p) => p.id === posId);
-              const cand = (candidates ?? []).find((c) => c.id === candId);
-              return (
-                <div key={posId} className="flex justify-between py-1.5 text-sm border-b border-border last:border-0">
-                  <span className="text-muted-foreground">{pos?.title}</span>
-                  <span className="font-medium text-foreground">{cand?.name}</span>
-                </div>
-              );
+              return (candIds || []).map((candId, idx) => {
+                const cand = (candidates ?? []).find((c) => c.id === candId);
+                return (
+                  <div key={`${posId}-${idx}`} className="flex justify-between py-1.5 text-sm border-b border-border last:border-0">
+                    <span className="text-muted-foreground">{pos?.title}{(pos?.max_votes ?? 1) > 1 ? ` (${idx + 1})` : ''}</span>
+                    <span className="font-medium text-foreground">{cand?.name}</span>
+                  </div>
+                );
+              });
             })}
           </div>
         </div>
@@ -131,15 +147,37 @@ export default function VotePage() {
   }
 
   const currentPosition = (positions ?? [])[currentStep];
+  const maxVotes = currentPosition?.max_votes ?? 1;
   const positionCandidates = (candidates ?? []).filter((c) => c.position_id === currentPosition?.id);
+  const currentSelections = selections[currentPosition?.id ?? ""] ?? [];
 
   const handleSelect = (candidateId) => {
     if (!currentPosition) return;
-    setSelections((prev) => ({
-      ...prev,
-      [currentPosition.id]: prev[currentPosition.id] === candidateId ? "" : candidateId,
-    }));
+    const posId = currentPosition.id;
+    const max = maxVotes;
+
+    setSelections((prev) => {
+      const existing = prev[posId] ?? [];
+
+      if (existing.includes(candidateId)) {
+        // Deselect
+        return { ...prev, [posId]: existing.filter((id) => id !== candidateId) };
+      } else {
+        if (existing.length >= max) {
+          // At max — don't add more; show a toast hint
+          toast({
+            title: `Max ${max} selection${max > 1 ? 's' : ''}`,
+            description: `You can only choose up to ${max} candidate${max > 1 ? 's' : ''} for ${currentPosition.title}. Deselect one first.`,
+            variant: "destructive",
+          });
+          return prev;
+        }
+        return { ...prev, [posId]: [...existing, candidateId] };
+      }
+    });
   };
+
+  const totalSelected = Object.values(selections).reduce((sum, arr) => sum + (arr?.length ?? 0), 0);
 
   const voteTitle = isClassroom ? `Vote — ${currentSection}` : 'Cast Your Vote';
 
@@ -155,12 +193,15 @@ export default function VotePage() {
           {isClassroom && (
             <p className="text-xs text-gold mt-1">Classroom Officers Election — {currentSection}</p>
           )}
+          {!isClassroom && gradeLevel && (
+            <p className="text-xs text-gold mt-1">Grade Representative shown for your grade: <span className="font-semibold">{gradeLevel}</span></p>
+          )}
         </div>
 
         <div className="mb-8">
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="text-muted-foreground">Position {currentStep + 1} of {(positions ?? []).length}</span>
-            <span className="font-medium text-foreground">{Object.values(selections).filter(Boolean).length} selected</span>
+            <span className="font-medium text-foreground">{totalSelected} vote{totalSelected !== 1 ? 's' : ''} selected</span>
           </div>
           <div className="h-2 bg-muted rounded-full overflow-hidden">
             <div className="h-full gradient-gold rounded-full transition-all duration-500"
@@ -172,13 +213,23 @@ export default function VotePage() {
           <h2 className="text-xl md:text-2xl font-display font-bold text-foreground">{currentPosition?.title}</h2>
           <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
             <AlertCircle className="w-4 h-4" />
-            Select one candidate
+            {maxVotes > 1
+              ? `Select up to ${maxVotes} candidates — ${currentSelections.length} / ${maxVotes} chosen`
+              : 'Select one candidate'}
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
           {positionCandidates.map((c, i) => (
-            <CandidateCard key={c.id} candidate={c} positionTitle={currentPosition?.title} selectable selected={selections[currentPosition?.id ?? ""] === c.id} onSelect={handleSelect} delay={i * 80} />
+            <CandidateCard
+              key={c.id}
+              candidate={c}
+              positionTitle={currentPosition?.title}
+              selectable
+              selected={currentSelections.includes(c.id)}
+              onSelect={handleSelect}
+              delay={i * 80}
+            />
           ))}
           {positionCandidates.length === 0 && (
             <div className="col-span-full text-center py-12"><p className="text-muted-foreground">No candidates for this position</p></div>
@@ -206,11 +257,17 @@ export default function VotePage() {
         </div>
 
         <div className="flex items-center justify-center gap-2 mt-6">
-          {(positions ?? []).map((p, i) => (
-            <button key={p.id} onClick={() => setCurrentStep(i)}
-              className={`w-2.5 h-2.5 rounded-full transition-all ${i === currentStep ? "w-6 gradient-gold" : selections[p.id] ? "bg-gold" : "bg-border"}`}
-              title={p.title} />
-          ))}
+          {(positions ?? []).map((p, i) => {
+            const sel = selections[p.id] ?? [];
+            const maxV = p.max_votes ?? 1;
+            const isFull = sel.length >= maxV && sel.length > 0;
+            const isPartial = sel.length > 0 && sel.length < maxV;
+            return (
+              <button key={p.id} onClick={() => setCurrentStep(i)}
+                className={`h-2.5 rounded-full transition-all ${i === currentStep ? "w-6 gradient-gold" : isFull ? "w-2.5 bg-gold" : isPartial ? "w-2.5 bg-gold/50" : "w-2.5 bg-border"}`}
+                title={p.title} />
+            );
+          })}
         </div>
       </div>
     </div>
